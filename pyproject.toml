@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=70.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "DroneControllerKivy"  # Required
+dynamic = ["version"]
+readme = "README.md"  # Optional
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Le Tournevis" } # Optional
+]
+
+# Required dependencies ------------------------------------------------------------------------------------------------
+dependencies = [
+    "kivy[base]",
+    "kivymd",
+    "pyjnius"
+]
+
+# Optional dependencies ------------------------------------------------------------------------------------------------
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",  # coverage with pytest
+    "coverage",  # coverage with unittest
+    "mkdocs",
+]
+
+build = [
+    "buildozer",
+    "setuptools"
+]
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules --durations=30 --color=yes"
+norecursedirs = [".git", "dist", "build"]
+
+[tool.ruff]
+line-length = 120
