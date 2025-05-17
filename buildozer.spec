@@ -1,7 +1,7 @@
 [app]
 
 # (str) Title of your application
-title = DroneControllerKivy
+title = DroneKivyBien
 
 # (str) Package name
 package.name = drone_controls
@@ -37,7 +37,7 @@ version = 0.1
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy,kivymd,pyjnius
+requirements = python3,kivy,kivymd,pyjnius,kivy_garden.joystick
 
 # (str) Custom source folders for requirements
 # Sets custom source for any requirements with recipes
