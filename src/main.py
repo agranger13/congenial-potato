@@ -14,10 +14,11 @@ class MyApp(MDApp):
     def build(self):
         screen_manager = MyScreenManager()
         
-        screen_manager.add_widget(ControlsPage(name='controls'))
         screen_manager.add_widget(HomePage(name='home'))
+        screen_manager.add_widget(ControlsPage(name='controls'))
         screen_manager.add_widget(SettingsPage(name='settings'))
-
+        
+        screen_manager.current = 'home'
         bottom_navigation = BottomNavigation(screen_manager=screen_manager)
 
         layout = MDBoxLayout(orientation='vertical')

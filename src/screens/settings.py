@@ -11,7 +11,7 @@ from kivy.logger import Logger
 from jnius import autoclass, cast
 import platform
 
-from components.ConnectDialogContent import ConnectDialogContent
+from components.connect_dialog_content import ConnectDialogContent
 
 class SettingsPage(MDScreen):
     def __init__(self, **kwargs):

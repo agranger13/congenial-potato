@@ -4,3 +4,4 @@ venv*/
 **/*.egg-info
 libs/
 bin/
+src/garden
