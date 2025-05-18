@@ -16,8 +16,7 @@ authors = [
 dependencies = [
     "kivy[base]",
     "kivymd",
-    "pyjnius",
-    "kivy_garden"
+    "pyjnius"
 ]
 
 # Optional dependencies ------------------------------------------------------------------------------------------------
