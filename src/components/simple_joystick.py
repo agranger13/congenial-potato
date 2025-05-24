@@ -4,6 +4,7 @@ from kivy.properties import NumericProperty
 from kivy.clock import Clock
 import socket
 from math import atan2, cos, sin, sqrt
+from kivy.logger import Logger
 
 class SimpleJoystick(Widget):
     pad_x = NumericProperty(0)
@@ -12,7 +13,7 @@ class SimpleJoystick(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
-        self.size = (300, 300)
+        self.size = (500, 500)
         self.knob_radius = 45  # moitié de la taille knob (90x90)
 
         with self.canvas:
@@ -31,7 +32,7 @@ class SimpleJoystick(Widget):
 
     def update_graphics(self, *args):
         cx, cy = self.center_x, self.center_y
-        r = self.width / 2
+        r = self.size[0] / 2
         self.base.pos = self.pos
         self.base.size = self.size
         self.border.circle = (cx, cy, r)
