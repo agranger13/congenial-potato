@@ -6,7 +6,7 @@ from typing import Dict
 from kivy.logger import Logger
 
 from constants import DEFAULT_DRONE_IP, DEFAULT_DRONE_PORT
-from platform import get_preferences_manager
+from platform_support import get_preferences_manager
 
 
 class DroneConfig:

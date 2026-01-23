@@ -12,7 +12,7 @@ from kivy.clock import Clock
 
 from components.connect_dialog_content import ConnectDialogContent
 from controlers.drone_config import DroneConfig
-from platform import get_wifi_manager, WifiManager
+from platform_support import get_wifi_manager, WifiManager
 from utils.dialog_helper import DialogHelper
 from constants import (
     SSID_UPDATE_DELAY,
