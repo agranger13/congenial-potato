@@ -1,12 +1,12 @@
+# Drone Remote Controller Android App
 
-
-# Install
+## Install
 ```sh
 # Install des dépendances
 pip install -e .
 
 ```
 
-# Build
+## Build
 - Activate venv
 - ` buildozer -v android debug`
