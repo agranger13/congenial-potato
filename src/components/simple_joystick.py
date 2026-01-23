@@ -1,65 +1,118 @@
+"""
+Widget joystick virtuel pour le contrôle du drone.
+Fournit une interface tactile avec retour visuel.
+"""
+from math import atan2, cos, sin, sqrt
 from kivy.uix.widget import Widget
 from kivy.graphics import Ellipse, Color, Line
 from kivy.properties import NumericProperty
 from kivy.clock import Clock
-import socket
-from math import atan2, cos, sin, sqrt
-from kivy.logger import Logger
+
+from constants import (
+    JOYSTICK_WIDGET_SIZE,
+    KNOB_RADIUS,
+    BORDER_WIDTH,
+    GRAPHICS_UPDATE_DELAY,
+    COLOR_JOYSTICK_BASE,
+    COLOR_JOYSTICK_BORDER,
+    COLOR_JOYSTICK_KNOB,
+)
+
 
 class SimpleJoystick(Widget):
+    """
+    Widget joystick virtuel avec retour tactile.
+
+    Propriétés:
+        pad_x: Position X normalisée (-1.0 à 1.0)
+        pad_y: Position Y normalisée (-1.0 à 1.0)
+    """
+
     pad_x = NumericProperty(0)
     pad_y = NumericProperty(0)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
-        self.size = (500, 500)
-        self.knob_radius = 45  # moitié de la taille knob (90x90)
+        self.size = JOYSTICK_WIDGET_SIZE
+        self._knob_radius = KNOB_RADIUS
 
+        self._draw_graphics()
+        self.bind(pos=self._update_graphics, size=self._update_graphics)
+        Clock.schedule_once(lambda dt: self._update_graphics(), GRAPHICS_UPDATE_DELAY)
+
+    def _draw_graphics(self):
+        """Dessine les éléments graphiques du joystick."""
         with self.canvas:
             # Base remplie gris clair
-            Color(0.7, 0.7, 0.7, 0.3)
-            self.base = Ellipse(pos=self.pos, size=self.size)
+            Color(*COLOR_JOYSTICK_BASE)
+            self._base = Ellipse(pos=self.pos, size=self.size)
+
             # Contour de la base
-            Color(0.5, 0.5, 0.5, 1.0)
-            self.border = Line(circle=(self.center_x, self.center_y, self.width/2), width=2)
-            # Knob gris foncé
-            Color(0.4, 0.4, 0.4, 1.0)
-            self.knob =  Ellipse(size=(self.knob_radius * 2, self.knob_radius * 2), pos=(0, 0))
+            Color(*COLOR_JOYSTICK_BORDER)
+            self._border = Line(
+                circle=(self.center_x, self.center_y, self.width / 2),
+                width=BORDER_WIDTH
+            )
 
-        self.bind(pos=self.update_graphics, size=self.update_graphics)
-        Clock.schedule_once(lambda dt: self.update_graphics(), 0.2)
+            # Knob (bouton central)
+            Color(*COLOR_JOYSTICK_KNOB)
+            self._knob = Ellipse(
+                size=(self._knob_radius * 2, self._knob_radius * 2),
+                pos=(0, 0)
+            )
 
-    def update_graphics(self, *args):
+    def _update_graphics(self, *args):
+        """Met à jour la position des éléments graphiques."""
         cx, cy = self.center_x, self.center_y
-        r = self.size[0] / 2
-        self.base.pos = self.pos
-        self.base.size = self.size
-        self.border.circle = (cx, cy, r)
+        radius = self.size[0] / 2
+
+        self._base.pos = self.pos
+        self._base.size = self.size
+        self._border.circle = (cx, cy, radius)
+
+        # Centrer le knob si au repos
         if self.pad_x == 0 and self.pad_y == 0:
-            # Centrer knob parfaitement
-            self.knob.pos = (cx - self.knob_radius, cy - self.knob_radius)
+            self._knob.pos = (cx - self._knob_radius, cy - self._knob_radius)
 
     def on_touch_move(self, touch):
-        if self.collide_point(*touch.pos):
-            cx, cy = self.center_x, self.center_y
-            r = self.width / 2
-            dx, dy = touch.x - cx, touch.y - cy
-            maxr = (self.width / 2) - self.knob_radius
-            dist = min(sqrt(dx ** 2 + dy ** 2), maxr)
-            angle = atan2(dy, dx)
-            self.pad_x = round(dist * cos(angle) / maxr, 2)
-            self.pad_y = round(dist * sin(angle) / maxr, 2)
-            # Position knob centré sur dx, dy
-            self.knob.pos = (cx + dist * cos(angle) - self.knob_radius,
-                             cy + dist * sin(angle) - self.knob_radius)
-            self.border.circle = (cx, cy, r)
-            return True
-        return super().on_touch_move(touch)
+        """Gère le mouvement tactile."""
+        if not self.collide_point(*touch.pos):
+            return super().on_touch_move(touch)
+
+        cx, cy = self.center_x, self.center_y
+        dx, dy = touch.x - cx, touch.y - cy
+
+        # Limiter au rayon maximum (moins le rayon du knob)
+        max_radius = (self.width / 2) - self._knob_radius
+        distance = min(sqrt(dx ** 2 + dy ** 2), max_radius)
+        angle = atan2(dy, dx)
+
+        # Calculer les valeurs normalisées (-1 à 1)
+        self.pad_x = round(distance * cos(angle) / max_radius, 2)
+        self.pad_y = round(distance * sin(angle) / max_radius, 2)
+
+        # Mettre à jour la position du knob
+        knob_x = cx + distance * cos(angle) - self._knob_radius
+        knob_y = cy + distance * sin(angle) - self._knob_radius
+        self._knob.pos = (knob_x, knob_y)
+
+        # Mettre à jour le cercle de bordure
+        self._border.circle = (cx, cy, self.width / 2)
+
+        return True
 
     def on_touch_up(self, touch):
-        if self.collide_point(*touch.pos):
-            self.pad_x, self.pad_y = 0, 0
-            self.knob.pos = (self.center_x - self.knob_radius, self.center_y - self.knob_radius)
-            return True
-        return super().on_touch_up(touch)
+        """Gère le relâchement tactile (retour au centre)."""
+        if not self.collide_point(*touch.pos):
+            return super().on_touch_up(touch)
+
+        # Reset au centre
+        self.pad_x = 0
+        self.pad_y = 0
+        self._knob.pos = (
+            self.center_x - self._knob_radius,
+            self.center_y - self._knob_radius
+        )
+
+        return True

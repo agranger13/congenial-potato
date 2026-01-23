@@ -1,63 +1,113 @@
+"""
+Barre de navigation inférieure pour l'application.
+Permet de naviguer entre les différentes pages.
+"""
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDIconButton
 from kivy.uix.screenmanager import SlideTransition
 
+from constants import (
+    NAV_HEIGHT_RATIO,
+    NAV_SPACING,
+    TRANSITION_DURATION,
+    COLOR_ICON_ACTIVE,
+    COLOR_NAV_INACTIVE,
+)
+
+
+# Configuration des écrans et leurs positions relatives
+SCREEN_ORDER = ['controls', 'home', 'settings']
+
+
 class BottomNavigation(MDBoxLayout):
+    """
+    Barre de navigation avec 3 boutons icônes.
+
+    Gère les transitions animées entre les écrans.
+    """
+
     def __init__(self, screen_manager, **kwargs):
-        super(BottomNavigation, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.orientation = 'horizontal'
-        self.size_hint = (1, 0.1)
-        self.spacing = '10dp'
+        self.size_hint = (1, NAV_HEIGHT_RATIO)
+        self.spacing = NAV_SPACING
 
-        self.screen_manager = screen_manager
-        self.current_screen = 'home'
+        self._screen_manager = screen_manager
+        self._current_screen = 'home'
+        self._buttons = {}
 
-        self.buttons = {}
+        # Créer les boutons de navigation
+        self._create_buttons()
+        self._set_active_button('home')
 
-        self.controls_button = self.create_button("controls", "gamepad")
-        self.home_button = self.create_button("home", "home")
-        self.settings_button = self.create_button("settings", "cog")
+    def _create_buttons(self):
+        """Crée les boutons de navigation."""
+        nav_items = [
+            ('controls', 'gamepad'),
+            ('home', 'home'),
+            ('settings', 'cog'),
+        ]
 
+        for screen_name, icon_name in nav_items:
+            button = MDIconButton(
+                icon=icon_name,
+                on_release=lambda x, name=screen_name: self._change_screen(name),
+                theme_text_color="Custom",
+                text_color=COLOR_NAV_INACTIVE,
+                size_hint=(1, 1)
+            )
+            self.add_widget(button)
+            self._buttons[screen_name] = button
 
+    def _change_screen(self, target: str):
+        """
+        Change d'écran avec animation de transition.
 
-        self.set_active_button("home")
+        Args:
+            target: Nom de l'écran cible
+        """
+        source = self._current_screen
+        if source == target:
+            return
 
-    def create_button(self, screen_name, icon_name):
-        button = MDIconButton(
-            icon=icon_name,
-            on_release=lambda x: self.change_screen(screen_name),
-            theme_text_color="Custom",
-            text_color=(0.5, 0.5, 0.5, 1)
+        # Déterminer la direction de la transition
+        direction = self._get_transition_direction(source, target)
+
+        # Appliquer la transition
+        self._screen_manager.transition = SlideTransition(
+            direction=direction,
+            duration=TRANSITION_DURATION
         )
-        button.size_hint = (1, 1)
-        self.add_widget(button)
-        self.buttons[screen_name] = button
-        return button
+        self._screen_manager.current = target
+        self._current_screen = target
+        self._set_active_button(target)
 
-    def change_screen(self, target):
-        source = self.current_screen
+    def _get_transition_direction(self, source: str, target: str) -> str:
+        """
+        Détermine la direction de transition entre deux écrans.
 
-        # Définir la direction selon la logique demandée
-        direction = 'left'  # par défaut
-        if source == 'home' and target == 'settings':
-            direction = 'left'
-        elif source == 'settings' and target == 'home':
-            direction = 'right'
-        elif source == 'home' and target == 'controls':
-            direction = 'right'
-        elif source == 'controls' and target == 'home':
-            direction = 'left'
-        elif source == 'settings' and target == 'controls':
-            direction = 'right'
-        elif source == 'controls' and target == 'settings':
-            direction = 'left'
+        Args:
+            source: Écran source
+            target: Écran cible
 
-        # Appliquer la transition et changer d'écran
-        self.screen_manager.transition = SlideTransition(direction=direction, duration=0.3)
-        self.screen_manager.current = target
-        self.current_screen = target
-        self.set_active_button(target)
+        Returns:
+            Direction ('left' ou 'right')
+        """
+        try:
+            source_idx = SCREEN_ORDER.index(source)
+            target_idx = SCREEN_ORDER.index(target)
+            return 'left' if target_idx > source_idx else 'right'
+        except ValueError:
+            return 'left'
 
-    def set_active_button(self, active_name):
-        for name, button in self.buttons.items():
-            button.text_color = (1, 0.5, 0, 1) if name == active_name else (0.5, 0.5, 0.5, 1)
+    def _set_active_button(self, active_name: str):
+        """
+        Met en surbrillance le bouton actif.
+
+        Args:
+            active_name: Nom de l'écran actif
+        """
+        for name, button in self._buttons.items():
+            button.text_color = (
+                COLOR_ICON_ACTIVE if name == active_name else COLOR_NAV_INACTIVE
+            )

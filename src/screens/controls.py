@@ -1,211 +1,132 @@
+"""
+Page de contrôle du drone avec joysticks virtuels.
+Gère l'interface utilisateur et la communication avec le drone.
+"""
+import time
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
-from kivymd.uix.button import MDRectangleFlatButton, MDRaisedButton, MDIconButton
+from kivymd.uix.button import MDRaisedButton, MDIconButton
 from kivymd.uix.card import MDCard
-from kivymd.uix.gridlayout import MDGridLayout
 from kivy.clock import Clock
-import socket
 from kivy.uix.widget import Widget
 from kivy.uix.anchorlayout import AnchorLayout
-from components.simple_joystick import SimpleJoystick  
 from kivy.config import Config
 from kivy.logger import Logger
-import time
 
+from components.simple_joystick import SimpleJoystick
 from controlers.drone_config import DroneConfig
+from drone.communication import DroneConnection, DroneCommand
+from utils.joystick_mapper import JoystickMapper
+from constants import (
+    # Timing
+    HEARTBEAT_INTERVAL,
+    SAFETY_TIMEOUT,
+    EMERGENCY_RESET_DELAY,
+    UI_SETUP_DELAY,
+    BUTTON_FLASH_DURATION,
+    # Couleurs
+    COLOR_SUCCESS,
+    COLOR_ERROR,
+    COLOR_WARNING,
+    COLOR_DANGER,
+    COLOR_BUTTON_ARM,
+    COLOR_BUTTON_DISARM,
+    COLOR_BUTTON_EMERGENCY,
+    COLOR_BUTTON_FLASH,
+    COLOR_CARD_DARK,
+    COLOR_CARD_LEFT_JOYSTICK,
+    COLOR_CARD_RIGHT_JOYSTICK,
+    COLOR_LABEL_LEFT,
+    COLOR_LABEL_RIGHT,
+    COLOR_ICON_INACTIVE,
+    # Dimensions
+    JOYSTICK_SIZE,
+    BUTTON_SIZE,
+    BUTTON_HEIGHT,
+    INFO_BUTTON_HEIGHT,
+    ICON_SIZE,
+    CARD_RADIUS,
+    STATUS_CARD_HEIGHT_RATIO,
+    JOYSTICK_CARD_HEIGHT_RATIO,
+    LAYOUT_SPACING,
+    CARD_SPACING,
+    CARD_PADDING,
+    BUTTON_SPACING,
+    # Tailles de police
+    FONT_SIZE_BUTTON,
+    # États
+    ARM_STATE_ARMED,
+    # Messages
+    MSG_DISARMED,
+    MSG_ARMED,
+    MSG_EMERGENCY,
+    MSG_TIMEOUT,
+)
+
 
 class ControlsPage(MDScreen):
+    """
+    Page principale de contrôle du drone.
+
+    Contient deux joysticks virtuels:
+    - Gauche: Roll (X) et Pitch (Y)
+    - Droit: Yaw (X) et Throttle (Y)
+    """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout = MDBoxLayout(orientation='vertical', spacing=15, size_hint=(1, 1), padding=20)
+
+        # Layout principal
+        self.layout = MDBoxLayout(
+            orientation='vertical',
+            spacing=LAYOUT_SPACING,
+            size_hint=(1, 1),
+            padding=20
+        )
         self.add_widget(self.layout)
+
+        # Charger la configuration
         config = DroneConfig().get_config()
 
-        # Setup UDP socket
-        self.server_ip = config["ip"]
-        self.server_port = int(config["port"])
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Initialiser la connexion drone
+        self._connection = DroneConnection(
+            ip=config["ip"],
+            port=int(config["port"]),
+            on_error=self._on_connection_error
+        )
+        self._connection.connect()
 
-        # Valeurs joystick (centre = 512, plage 0-1023)
-        self.left_x = 512    # Roll
-        self.left_y = 512    # Pitch  
-        self.right_x = 512   # Yaw
-        self.right_y = 100   # Throttle (commence bas pour sécurité)
-        self.armed = 0       # État armement
-        self.emergency = 0   # Bouton d'urgence
-
-        # Zone morte
-        self.deadzone = 20
+        # Initialiser la commande et le mapper
+        self._command = DroneCommand()
+        self._mapper = JoystickMapper()
 
         # Timer pour timeout de sécurité
-        self.last_command_time = time.time()
-        self.timeout_event = None
+        self._last_command_time = time.time()
 
-        Clock.schedule_once(self.setup_ui, 0.5)
-        Clock.schedule_interval(self.send_heartbeat, 0.1)  # Envoie toutes les 100ms
+        # Planifier l'initialisation de l'UI et le heartbeat
+        Clock.schedule_once(self._setup_ui, UI_SETUP_DELAY)
+        Clock.schedule_interval(self._send_heartbeat, HEARTBEAT_INTERVAL)
 
     def on_enter(self):
+        """Appelé quand on entre dans la page."""
         Config.set('graphics', 'rotation', 90)
 
-    def setup_ui(self, dt):
-        # Card principale pour le statut
-        status_card = MDCard(
-            orientation='vertical',
-            size_hint=(1, 0.2),
-            padding=15,
-            spacing=10,
-            md_bg_color=(0.1, 0.1, 0.1, 0.2),  # Fond sombre semi-transparent
-            radius=[5, 5, 5, 5]
-        )
-        
-        # Label de statut avec style amélioré
-        self.status_label = MDLabel(
-            text=f"🔗 {self.server_ip}:{self.server_port} | 🔒 DÉSARMÉ", 
-            halign='center',
-            font_style="H6",
-            theme_text_color="Custom",
-            text_color=(1, 0.3, 0.3, 1),  # Rouge
-            bold=True
-        )
-        
-        # Conteneur principal pour les boutons avec centrage parfait
-        button_container = AnchorLayout(
-            anchor_x='center', 
-            anchor_y='center',
-            size_hint=(1, None),
-            height="80dp"
-        )
-        
-        # Layout horizontal pour les boutons principaux
-        main_buttons_layout = MDBoxLayout(
+    def _setup_ui(self, dt):
+        """Configure l'interface utilisateur."""
+        # Card de statut
+        status_card = self._create_status_card()
+
+        # Container pour les joysticks
+        joystick_container = MDBoxLayout(
             orientation='horizontal',
-            spacing=25,
-            size_hint=(None, None),
-            height="60dp",
-            adaptive_width=True
+            spacing=20,
+            size_hint=(1, JOYSTICK_CARD_HEIGHT_RATIO)
         )
-        
-        # Bouton ARM/DISARM avec style moderne
-        self.arm_button = MDRaisedButton(
-            text="🛡️ ARMER",
-            size_hint=(None, None),
-            size=("180dp", "60dp"),
-            md_bg_color=(0.2, 0.7, 0.2, 1),  # Vert
-            text_color=(1, 1, 1, 1),
-            theme_text_color="Custom",
-            font_size="16sp",
-            on_release=self.toggle_arm
-        )
-        
-        # Bouton d'urgence avec style alarmant
-        self.emergency_button = MDRaisedButton(
-            text="🚨 URGENCE",
-            size_hint=(None, None),
-            size=("180dp", "60dp"),
-            md_bg_color=(0.9, 0.1, 0.1, 1),  # Rouge vif
-            text_color=(1, 1, 1, 1),
-            theme_text_color="Custom",
-            font_size="16sp",
-            on_release=self.emergency_stop
-        )
-        
-        # Ajouter les boutons principaux au layout
-        main_buttons_layout.add_widget(self.arm_button)
-        main_buttons_layout.add_widget(self.emergency_button)
-        
-        # Centrer le layout des boutons principaux
-        button_container.add_widget(main_buttons_layout)
-        
-        # Layout pour les boutons d'info (optionnel, en haut)
-        info_layout = MDBoxLayout(
-            orientation='horizontal',
-            spacing=10,
-            size_hint=(1, None),
-            height="40dp"
-        )
-        
-        info_button = MDIconButton(
-            icon="information-outline",
-            theme_icon_color="Custom",
-            icon_color=(0.7, 0.7, 0.7, 1),
-            icon_size="25dp"
-        )
-        
-        settings_button = MDIconButton(
-            icon="cog-outline",
-            theme_icon_color="Custom",
-            icon_color=(0.7, 0.7, 0.7, 1),
-            icon_size="25dp"
-        )
-        
-        # Espacer les boutons d'info sur les côtés
-        info_layout.add_widget(info_button)
-        info_layout.add_widget(Widget())  # Spacer
-        info_layout.add_widget(settings_button)
-        
-        status_card.add_widget(self.status_label)
-        status_card.add_widget(info_layout)
-        status_card.add_widget(button_container)
 
-        # Cards pour les joysticks
-        joystick_container = MDBoxLayout(orientation='horizontal', spacing=20, size_hint=(1, 0.8))
-
-        # Left Joystick Card (Roll/Pitch)
-        left_card = MDCard(
-            orientation='vertical',
-            size_hint=(0.5, 1),
-            padding=20,
-            spacing=15,
-            md_bg_color=(0.05, 0.05, 0.15, 0.7),  # Bleu très sombre
-            radius=[5, 5, 5, 5]
-        )
-        
-        self.left_label = MDLabel(
-            text="🎯 Roll: 0° | Pitch: 0°", 
-            halign='center',
-            font_style="Subtitle1",
-            theme_text_color="Custom",
-            text_color=(0.8, 0.9, 1, 1),  # Bleu clair
-            bold=True,
-            size_hint=(1, 0.15)
-        )
-        
-        self.joystick_left = SimpleJoystick(size_hint=(None, None), size=(280, 280))
-        self.joystick_left.bind(pad_x=self.on_left_move, pad_y=self.on_left_move)
-
-        left_card.add_widget(self.left_label)
-        left_anchor = AnchorLayout(anchor_x='center', anchor_y='center', size_hint=(1, 0.85))
-        left_anchor.add_widget(self.joystick_left)
-        left_card.add_widget(left_anchor)
-
-        # Right Joystick Card (Yaw/Throttle)
-        right_card = MDCard(
-            orientation='vertical',
-            size_hint=(0.5, 1),
-            padding=20,
-            spacing=15,
-            md_bg_color=(0.15, 0.05, 0.05, 0.7),  # Rouge très sombre
-            radius=[5, 5, 5, 5]
-        )
-        
-        self.right_label = MDLabel(
-            text="🔄 Yaw: 0°/s | ⚡ Throttle: 0%", 
-            halign='center',
-            font_style="Subtitle1", 
-            theme_text_color="Custom",
-            text_color=(1, 0.9, 0.8, 1),  # Orange clair
-            bold=True,
-            size_hint=(1, 0.15)
-        )
-        
-        self.joystick_right = SimpleJoystick(size_hint=(None, None), size=(280, 280))
-        self.joystick_right.bind(pad_x=self.on_right_move, pad_y=self.on_right_move)
-
-        right_card.add_widget(self.right_label)
-        right_anchor = AnchorLayout(anchor_x='center', anchor_y='center', size_hint=(1, 0.85))
-        right_anchor.add_widget(self.joystick_right)
-        right_card.add_widget(right_anchor)
+        # Cards joystick gauche et droite
+        left_card = self._create_left_joystick_card()
+        right_card = self._create_right_joystick_card()
 
         joystick_container.add_widget(left_card)
         joystick_container.add_widget(right_card)
@@ -215,151 +136,283 @@ class ControlsPage(MDScreen):
         self.layout.add_widget(status_card)
         self.layout.add_widget(joystick_container)
 
-    def map_value_to_joystick(self, pad_value):
-        """
-        Convertit la valeur du pad (-1.0 à 1.0) vers les valeurs joystick (0-1023)
-        avec zone morte appliquée
-        """
-        # Convertir de -1,1 vers 0-1023
-        joystick_value = int((pad_value + 1.0) * 511.5)
-        
-        # Appliquer la zone morte autour du centre (512)
-        center = 512
-        if abs(joystick_value - center) <= self.deadzone:
-            joystick_value = center
-            
-        # Limiter les valeurs
-        return max(0, min(1023, joystick_value))
+    def _create_status_card(self) -> MDCard:
+        """Crée la card de statut avec les boutons de contrôle."""
+        status_card = MDCard(
+            orientation='vertical',
+            size_hint=(1, STATUS_CARD_HEIGHT_RATIO),
+            padding=CARD_PADDING,
+            spacing=CARD_SPACING,
+            md_bg_color=COLOR_CARD_DARK,
+            radius=CARD_RADIUS
+        )
 
-    def map_throttle(self, pad_y):
-        """
-        Mapping spécial pour le throttle : -1.0 (bas) = 0, +1.0 (haut) = 200
-        """
-        throttle_value = int((pad_y + 1.0) * 100)  # -1,1 -> 0,200
-        
-        # Zone morte pour le throttle
-        if throttle_value <= 10:  # Zone morte en bas
-            throttle_value = 0
-            
-        return max(0, min(200, throttle_value))
+        # Label de statut
+        self.status_label = MDLabel(
+            text=f"🔗 {self._connection.address} | 🔒 {MSG_DISARMED}",
+            halign='center',
+            font_style="H6",
+            theme_text_color="Custom",
+            text_color=COLOR_ERROR,
+            bold=True
+        )
 
-    def on_left_move(self, instance, value):
-        """Left stick: Roll (X) et Pitch (Y)"""
-        self.left_x = self.map_value_to_joystick(self.joystick_left.pad_x)
-        self.left_y = self.map_value_to_joystick(self.joystick_left.pad_y)
-        
-        # Conversion en degrés pour affichage (-30° à +30°)
-        roll_degrees = int((self.left_x - 512) * 30 / 511)
-        pitch_degrees = int((self.left_y - 512) * 30 / 511)
-        
-        self.left_label.text = f"🎯 Roll: {roll_degrees}° | Pitch: {pitch_degrees}°"
-        self.update_command_time()
+        # Boutons d'info
+        info_layout = self._create_info_buttons()
 
-    def on_right_move(self, instance, value):
-        """Right stick: Yaw (X) et Throttle (Y)"""
-        self.right_x = self.map_value_to_joystick(self.joystick_right.pad_x)
-        self.right_y = self.map_throttle(self.joystick_right.pad_y)
-        
-        # Conversion pour affichage
-        yaw_rate = int((self.right_x - 512) * 180 / 511)  # -180°/s à +180°/s
-        throttle_percent = int(self.right_y * 100 / 200)   # 0-100%
-        
-        # Couleur dynamique pour le throttle
-        if throttle_percent > 70:
-            throttle_color = (1, 0.3, 0.3, 1)  # Rouge pour throttle élevé
-        elif throttle_percent > 30:
-            throttle_color = (1, 0.8, 0.3, 1)  # Orange pour throttle moyen
-        else:
-            throttle_color = (0.3, 1, 0.3, 1)  # Vert pour throttle bas
-            
+        # Boutons principaux (Arm/Emergency)
+        button_container = self._create_main_buttons()
+
+        status_card.add_widget(self.status_label)
+        status_card.add_widget(info_layout)
+        status_card.add_widget(button_container)
+
+        return status_card
+
+    def _create_info_buttons(self) -> MDBoxLayout:
+        """Crée les boutons d'information."""
+        info_layout = MDBoxLayout(
+            orientation='horizontal',
+            spacing=CARD_SPACING,
+            size_hint=(1, None),
+            height=INFO_BUTTON_HEIGHT
+        )
+
+        info_button = MDIconButton(
+            icon="information-outline",
+            theme_icon_color="Custom",
+            icon_color=COLOR_ICON_INACTIVE,
+            icon_size=ICON_SIZE
+        )
+
+        settings_button = MDIconButton(
+            icon="cog-outline",
+            theme_icon_color="Custom",
+            icon_color=COLOR_ICON_INACTIVE,
+            icon_size=ICON_SIZE
+        )
+
+        info_layout.add_widget(info_button)
+        info_layout.add_widget(Widget())  # Spacer
+        info_layout.add_widget(settings_button)
+
+        return info_layout
+
+    def _create_main_buttons(self) -> AnchorLayout:
+        """Crée les boutons ARM et URGENCE."""
+        button_container = AnchorLayout(
+            anchor_x='center',
+            anchor_y='center',
+            size_hint=(1, None),
+            height="80dp"
+        )
+
+        main_buttons_layout = MDBoxLayout(
+            orientation='horizontal',
+            spacing=BUTTON_SPACING,
+            size_hint=(None, None),
+            height=BUTTON_HEIGHT,
+            adaptive_width=True
+        )
+
+        # Bouton ARM/DISARM
+        self.arm_button = MDRaisedButton(
+            text="🛡️ ARMER",
+            size_hint=(None, None),
+            size=BUTTON_SIZE,
+            md_bg_color=COLOR_BUTTON_ARM,
+            text_color=(1, 1, 1, 1),
+            theme_text_color="Custom",
+            font_size=FONT_SIZE_BUTTON,
+            on_release=self._toggle_arm
+        )
+
+        # Bouton d'urgence
+        self.emergency_button = MDRaisedButton(
+            text="🚨 URGENCE",
+            size_hint=(None, None),
+            size=BUTTON_SIZE,
+            md_bg_color=COLOR_BUTTON_EMERGENCY,
+            text_color=(1, 1, 1, 1),
+            theme_text_color="Custom",
+            font_size=FONT_SIZE_BUTTON,
+            on_release=self._emergency_stop
+        )
+
+        main_buttons_layout.add_widget(self.arm_button)
+        main_buttons_layout.add_widget(self.emergency_button)
+        button_container.add_widget(main_buttons_layout)
+
+        return button_container
+
+    def _create_left_joystick_card(self) -> MDCard:
+        """Crée la card du joystick gauche (Roll/Pitch)."""
+        left_card = MDCard(
+            orientation='vertical',
+            size_hint=(0.5, 1),
+            padding=20,
+            spacing=CARD_PADDING,
+            md_bg_color=COLOR_CARD_LEFT_JOYSTICK,
+            radius=CARD_RADIUS
+        )
+
+        self.left_label = MDLabel(
+            text="🎯 Roll: 0° | Pitch: 0°",
+            halign='center',
+            font_style="Subtitle1",
+            theme_text_color="Custom",
+            text_color=COLOR_LABEL_LEFT,
+            bold=True,
+            size_hint=(1, 0.15)
+        )
+
+        self.joystick_left = SimpleJoystick(size_hint=(None, None), size=JOYSTICK_SIZE)
+        self.joystick_left.bind(pad_x=self._on_left_move, pad_y=self._on_left_move)
+
+        left_card.add_widget(self.left_label)
+
+        left_anchor = AnchorLayout(
+            anchor_x='center',
+            anchor_y='center',
+            size_hint=(1, 0.85)
+        )
+        left_anchor.add_widget(self.joystick_left)
+        left_card.add_widget(left_anchor)
+
+        return left_card
+
+    def _create_right_joystick_card(self) -> MDCard:
+        """Crée la card du joystick droit (Yaw/Throttle)."""
+        right_card = MDCard(
+            orientation='vertical',
+            size_hint=(0.5, 1),
+            padding=20,
+            spacing=CARD_PADDING,
+            md_bg_color=COLOR_CARD_RIGHT_JOYSTICK,
+            radius=CARD_RADIUS
+        )
+
+        self.right_label = MDLabel(
+            text="🔄 Yaw: 0°/s | ⚡ Throttle: 0%",
+            halign='center',
+            font_style="Subtitle1",
+            theme_text_color="Custom",
+            text_color=COLOR_LABEL_RIGHT,
+            bold=True,
+            size_hint=(1, 0.15)
+        )
+
+        self.joystick_right = SimpleJoystick(size_hint=(None, None), size=JOYSTICK_SIZE)
+        self.joystick_right.bind(pad_x=self._on_right_move, pad_y=self._on_right_move)
+
+        right_card.add_widget(self.right_label)
+
+        right_anchor = AnchorLayout(
+            anchor_x='center',
+            anchor_y='center',
+            size_hint=(1, 0.85)
+        )
+        right_anchor.add_widget(self.joystick_right)
+        right_card.add_widget(right_anchor)
+
+        return right_card
+
+    def _on_left_move(self, instance, value):
+        """Gère le mouvement du joystick gauche (Roll/Pitch)."""
+        left_x, left_y, roll_deg, pitch_deg = self._mapper.map_left_joystick(
+            self.joystick_left.pad_x,
+            self.joystick_left.pad_y
+        )
+
+        self._command.left_x = left_x
+        self._command.left_y = left_y
+        self.left_label.text = f"🎯 Roll: {roll_deg}° | Pitch: {pitch_deg}°"
+        self._update_command_time()
+
+    def _on_right_move(self, instance, value):
+        """Gère le mouvement du joystick droit (Yaw/Throttle)."""
+        right_x, right_y, yaw_rate, throttle_pct, throttle_color = self._mapper.map_right_joystick(
+            self.joystick_right.pad_x,
+            self.joystick_right.pad_y
+        )
+
+        self._command.right_x = right_x
+        self._command.right_y = right_y
         self.right_label.text_color = throttle_color
-        self.right_label.text = f"🔄 Yaw: {yaw_rate}°/s | ⚡ Throttle: {throttle_percent}%"
-        self.update_command_time()
+        self.right_label.text = f"🔄 Yaw: {yaw_rate}°/s | ⚡ Throttle: {throttle_pct}%"
+        self._update_command_time()
 
-    def toggle_arm(self, instance):
-        """Basculer l'état d'armement"""
-        self.armed = 1 - self.armed
-        if self.armed:
-            # État armé
+    def _toggle_arm(self, instance):
+        """Bascule l'état d'armement."""
+        is_armed = self._command.toggle_armed()
+
+        if is_armed:
             self.arm_button.text = "🛡️ DÉSARMER"
-            self.arm_button.md_bg_color = (0.9, 0.3, 0.3, 1)  # Rouge
-            self.status_label.text = f"🔗 {self.server_ip}:{self.server_port} | ✅ ARMÉ"
-            self.status_label.text_color = (0.3, 1, 0.3, 1)  # Vert
+            self.arm_button.md_bg_color = COLOR_BUTTON_DISARM
+            self.status_label.text = f"🔗 {self._connection.address} | ✅ {MSG_ARMED}"
+            self.status_label.text_color = COLOR_SUCCESS
         else:
-            # État désarmé
             self.arm_button.text = "🛡️ ARMER"
-            self.arm_button.md_bg_color = (0.2, 0.7, 0.2, 1)  # Vert
-            self.status_label.text = f"🔗 {self.server_ip}:{self.server_port} | 🔒 DÉSARMÉ"
-            self.status_label.text_color = (1, 0.3, 0.3, 1)  # Rouge
-        
-        self.update_command_time()
+            self.arm_button.md_bg_color = COLOR_BUTTON_ARM
+            self.status_label.text = f"🔗 {self._connection.address} | 🔒 {MSG_DISARMED}"
+            self.status_label.text_color = COLOR_ERROR
 
-    def emergency_stop(self, instance):
-        """Arrêt d'urgence"""
-        self.emergency = 1
-        self.armed = 0
-        self.right_y = 0  # Throttle à 0
-        
-        # Animation du bouton d'urgence
-        self.emergency_button.md_bg_color = (1, 1, 1, 1)  # Blanc pour effet flash
-        Clock.schedule_once(lambda dt: setattr(self.emergency_button, 'md_bg_color', (0.9, 0.1, 0.1, 1)), 0.1)
-        
+        self._update_command_time()
+
+    def _emergency_stop(self, instance):
+        """Déclenche l'arrêt d'urgence."""
+        self._command.trigger_emergency()
+
+        # Animation flash du bouton
+        self.emergency_button.md_bg_color = COLOR_BUTTON_FLASH
+        Clock.schedule_once(
+            lambda dt: setattr(self.emergency_button, 'md_bg_color', COLOR_BUTTON_EMERGENCY),
+            BUTTON_FLASH_DURATION
+        )
+
         # Reset UI
         self.arm_button.text = "🛡️ ARMER"
-        self.arm_button.md_bg_color = (0.2, 0.7, 0.2, 1)
-        self.status_label.text = f"🔗 {self.server_ip}:{self.server_port} | ❌ URGENCE!"
-        self.status_label.text_color = (1, 0, 0, 1)  # Rouge vif
-        
-        # Envoyer commande d'urgence
-        self.send_command()
-        
-        # Reset emergency après 1 seconde
-        Clock.schedule_once(lambda dt: setattr(self, 'emergency', 0), 1.0)
-        self.update_command_time()
+        self.arm_button.md_bg_color = COLOR_BUTTON_ARM
+        self.status_label.text = f"🔗 {self._connection.address} | ❌ {MSG_EMERGENCY}"
+        self.status_label.text_color = COLOR_DANGER
 
-    def update_command_time(self):
-        """Met à jour le timestamp de la dernière commande"""
-        self.last_command_time = time.time()
+        # Envoyer commande d'urgence immédiatement
+        self._connection.send_command(self._command)
 
-    def send_heartbeat(self, dt):
-        """Envoie régulier des commandes"""
+        # Reset emergency après délai
+        Clock.schedule_once(
+            lambda dt: self._command.clear_emergency(),
+            EMERGENCY_RESET_DELAY
+        )
+        self._update_command_time()
+
+    def _update_command_time(self):
+        """Met à jour le timestamp de la dernière commande."""
+        self._last_command_time = time.time()
+
+    def _send_heartbeat(self, dt):
+        """Envoie régulier des commandes (heartbeat)."""
         current_time = time.time()
-        
-        # Vérifier le timeout (5 secondes)
-        if current_time - self.last_command_time > 5.0:
-            # Timeout: désarmer automatiquement
-            if self.armed:
-                self.armed = 0
+
+        # Vérifier le timeout de sécurité
+        if current_time - self._last_command_time > SAFETY_TIMEOUT:
+            if self._command.armed == ARM_STATE_ARMED:
+                self._command.armed = 0
                 self.arm_button.text = "🛡️ ARMER"
-                self.arm_button.md_bg_color = (0.2, 0.7, 0.2, 1)
-                self.status_label.text = f"🔗 {self.server_ip}:{self.server_port} | ⏰ TIMEOUT - DÉSARMÉ"
-                self.status_label.text_color = (1, 0.5, 0, 1)  # Orange
+                self.arm_button.md_bg_color = COLOR_BUTTON_ARM
+                self.status_label.text = f"🔗 {self._connection.address} | ⏰ {MSG_TIMEOUT}"
+                self.status_label.text_color = COLOR_WARNING
                 Logger.warning("Drone: Timeout détecté - désarmement automatique")
 
-        self.send_command()
+        self._connection.send_command(self._command)
 
-    def send_command(self):
-        """
-        Envoie la commande au format CSV: leftX,leftY,rightX,rightY,armed,emergency
-        Exemple: 512,480,500,100,1,0
-        """
-        try:
-            # Format CSV exact demandé
-            message = f"{self.left_x},{self.left_y},{self.right_x},{self.right_y},{self.armed},{self.emergency}"
-            self.sock.sendto(message.encode(), (self.server_ip, self.server_port))
-            
-            # Log pour debug (seulement si armed ou emergency)
-            if self.armed or self.emergency:
-                Logger.info(f"Drone CMD: {message}")
-                
-        except OSError as e:
-            Logger.error(f"Erreur envoi commande: {e}")
-            self.status_label.text = f"❌ ERREUR CONNEXION: {e}"
-            self.status_label.text_color = (1, 0, 0, 1)
+    def _on_connection_error(self, message: str):
+        """Gère les erreurs de connexion."""
+        self.status_label.text = f"❌ {message}"
+        self.status_label.text_color = COLOR_DANGER
 
     def on_leave(self):
-        """Nettoyage en quittant la page"""
-        self.armed = 0
-        self.emergency = 1
-        self.send_command()  # Envoyer commande d'arrêt
-        Clock.unschedule(self.send_heartbeat)
+        """Nettoyage en quittant la page."""
+        self._command.trigger_emergency()
+        self._connection.send_command(self._command)
+        Clock.unschedule(self._send_heartbeat)

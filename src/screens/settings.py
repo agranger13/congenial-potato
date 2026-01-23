@@ -1,40 +1,80 @@
+"""
+Page de configuration de l'application.
+Gère la connexion WiFi et la configuration du drone.
+"""
+from typing import Dict
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.button import MDRectangleFlatButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.list import OneLineListItem
-from kivymd.uix.dialog import MDDialog
-from kivymd.uix.textfield import MDTextField
-from kivymd.uix.scrollview import MDScrollView
-from kivymd.uix.list import MDList
 from kivymd.uix.card import MDCard
 from kivy.clock import Clock
-from jnius import autoclass, cast
-import platform
 
 from components.connect_dialog_content import ConnectDialogContent
 from controlers.drone_config import DroneConfig
+from platform import get_wifi_manager, WifiManager
+from utils.dialog_helper import DialogHelper
+from constants import (
+    SSID_UPDATE_DELAY,
+    WIFI_CARD_HEIGHT,
+    DRONE_CARD_HEIGHT,
+    CARD_PADDING,
+    SCREEN_PADDING,
+    MSG_NO_WIFI,
+)
+
 
 class SettingsPage(MDScreen):
+    """
+    Page de configuration avec deux sections:
+    - Configuration WiFi (scan et connexion)
+    - Configuration Drone (IP et port)
+    """
+
     def __init__(self, **kwargs):
-        super(SettingsPage, self).__init__(**kwargs)
-        self.current_activity = self._get_current_activity()
-        self.wifi_manager = self._get_wifi_manager()
-        
+        super().__init__(**kwargs)
+
+        # Initialiser le manager WiFi (abstraction plateforme)
+        self._wifi_manager: WifiManager = get_wifi_manager()
+
         # Instance de configuration du drone
-        self.drone_config = DroneConfig()
-        
-        layout = MDBoxLayout(orientation='vertical', spacing='15dp', padding='20dp')
+        self._drone_config = DroneConfig()
+
+        # Construire l'interface
+        self._build_ui()
+
+        # Mettre à jour le SSID après un court délai
+        Clock.schedule_once(self._update_current_ssid, SSID_UPDATE_DELAY)
+
+    def _build_ui(self):
+        """Construit l'interface utilisateur."""
+        layout = MDBoxLayout(
+            orientation='vertical',
+            spacing='15dp',
+            padding=SCREEN_PADDING
+        )
 
         # Section Wi-Fi
+        wifi_card = self._create_wifi_card()
+        layout.add_widget(wifi_card)
+
+        # Section Configuration Drone
+        drone_card = self._create_drone_card()
+        layout.add_widget(drone_card)
+
+        self.add_widget(layout)
+
+    def _create_wifi_card(self) -> MDCard:
+        """Crée la card de configuration WiFi."""
         wifi_card = MDCard(
             size_hint_y=None,
-            height="200dp",
-            padding="15dp",
+            height=WIFI_CARD_HEIGHT,
+            padding=CARD_PADDING,
             elevation=2
         )
+
         wifi_layout = MDBoxLayout(orientation='vertical', spacing='10dp')
-        
+
         wifi_title = MDLabel(
             text='Wi-Fi Configuration',
             theme_text_color="Primary",
@@ -47,25 +87,27 @@ class SettingsPage(MDScreen):
         self.ssid_label = MDLabel(text='Current SSID: Unknown', halign='left')
         wifi_layout.add_widget(self.ssid_label)
 
-        self.scan_button = MDRectangleFlatButton(
+        scan_button = MDRectangleFlatButton(
             text='Scan Wi-Fi Networks',
             pos_hint={'center_x': 0.5},
-            on_release=self.scan_wifi_networks
+            on_release=self._on_scan_wifi
         )
-        wifi_layout.add_widget(self.scan_button)
-        
-        wifi_card.add_widget(wifi_layout)
-        layout.add_widget(wifi_card)
+        wifi_layout.add_widget(scan_button)
 
-        # Section Configuration Drone
+        wifi_card.add_widget(wifi_layout)
+        return wifi_card
+
+    def _create_drone_card(self) -> MDCard:
+        """Crée la card de configuration du drone."""
         drone_card = MDCard(
             size_hint_y=None,
-            height="220dp",
-            padding="15dp",
+            height=DRONE_CARD_HEIGHT,
+            padding=CARD_PADDING,
             elevation=2
         )
+
         drone_layout = MDBoxLayout(orientation='vertical', spacing='10dp')
-        
+
         drone_title = MDLabel(
             text='Drone Configuration',
             theme_text_color="Primary",
@@ -76,239 +118,134 @@ class SettingsPage(MDScreen):
         drone_layout.add_widget(drone_title)
 
         self.drone_ip_label = MDLabel(
-            text=f'Drone IP: {self.drone_config.ip}',
+            text=f'Drone IP: {self._drone_config.ip}',
             halign='left'
         )
         drone_layout.add_widget(self.drone_ip_label)
 
         self.drone_port_label = MDLabel(
-            text=f'Drone Port: {self.drone_config.port}',
+            text=f'Drone Port: {self._drone_config.port}',
             halign='left'
         )
         drone_layout.add_widget(self.drone_port_label)
 
-        self.config_drone_button = MDRectangleFlatButton(
+        config_button = MDRectangleFlatButton(
             text='Configure Drone Connection',
             pos_hint={'center_x': 0.5},
-            on_release=self.show_drone_config_dialog
+            on_release=self._on_configure_drone
         )
-        drone_layout.add_widget(self.config_drone_button)
-        
+        drone_layout.add_widget(config_button)
+
         drone_card.add_widget(drone_layout)
-        layout.add_widget(drone_card)
+        return drone_card
 
-        self.add_widget(layout)
-        Clock.schedule_once(self.update_current_ssid, 0.5)
-
-    def get_drone_config(self):
-        """Retourne la configuration actuelle du drone"""
-        return self.drone_config.get_config()
-
-    def show_drone_config_dialog(self, instance):
-        """Affiche le dialog de configuration du drone"""
-        content = MDBoxLayout(
-            orientation='vertical',
-            spacing='10dp',
-            size_hint_y=None,
-            height="150dp"
-        )
-
-        self.ip_field = MDTextField(
-            hint_text="IP Address",
-            text=self.drone_config.ip,
-            mode="rectangle"
-        )
-        content.add_widget(self.ip_field)
-
-        self.port_field = MDTextField(
-            hint_text="Port",
-            text=self.drone_config.port,
-            mode="rectangle"
-        )
-        content.add_widget(self.port_field)
-
-        self.drone_config_dialog = MDDialog(
-            title="Configure Drone Connection",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDRectangleFlatButton(
-                    text="CANCEL",
-                    on_release=lambda x: self.drone_config_dialog.dismiss()
-                ),
-                MDRectangleFlatButton(
-                    text="SAVE",
-                    on_release=self.save_drone_config_dialog
-                )
-            ]
-        )
-        self.drone_config_dialog.open()
-
-    def save_drone_config_dialog(self, instance):
-        """Sauvegarde la nouvelle configuration du drone"""
-        new_ip = self.ip_field.text.strip()
-        new_port = self.port_field.text.strip()
-
-        # Validation basique
-        if not new_ip or not new_port:
-            self.show_dialog("Please fill in both IP and Port fields.")
-            return
-
-        try:
-            # Validation du port
-            port_int = int(new_port)
-            if port_int < 1 or port_int > 65535:
-                self.show_dialog("Port must be between 1 and 65535.")
-                return
-        except ValueError:
-            self.show_dialog("Port must be a valid number.")
-            return
-
-        # Sauvegarde via le singleton
-        self.drone_config.set_config(new_ip, new_port)
-
-        # Mise à jour des labels
-        self.drone_ip_label.text = f'Drone IP: {self.drone_config.ip}'
-        self.drone_port_label.text = f'Drone Port: {self.drone_config.port}'
-
-        self.drone_config_dialog.dismiss()
-        self.show_dialog(f"Drone configuration saved:\nIP: {self.drone_config.ip}\nPort: {self.drone_config.port}")
-
-    def update_current_ssid(self, dt):
-        if platform.system() == "Windows":
-            ssid = "Test_Network"
-        else:
-            info = self.wifi_manager.getConnectionInfo()
-            ssid = info.getSSID()
-            if ssid.startswith('"') and ssid.endswith('"'):
-                ssid = ssid[1:-1]  # Nettoie les guillemets
-
+    def _update_current_ssid(self, dt=None):
+        """Met à jour l'affichage du SSID actuel."""
+        ssid = self._wifi_manager.get_current_ssid()
         self.ssid_label.text = f"Current SSID: {ssid}"
 
-    def scan_wifi_networks(self, instance):
+    def _on_scan_wifi(self, instance):
+        """Gère le clic sur le bouton de scan WiFi."""
         try:
-            networks = self.get_wifi_networks()
+            networks = self._wifi_manager.scan_networks()
             if networks:
-                self.show_wifi_list(networks)
+                self._show_wifi_list(networks)
             else:
-                self.show_dialog("No Wi-Fi networks found.")
+                DialogHelper.show_info("Information", MSG_NO_WIFI)
         except Exception as e:
-            self.show_dialog(f"Error: {str(e)}")
+            DialogHelper.show_info("Error", str(e))
 
-    def _get_current_activity(self):
-        if platform.system() == "Windows":
-            return None
-        python_activity = autoclass('org.kivy.android.PythonActivity')
-        return cast('android.app.Activity', python_activity.mActivity)
-
-    def _get_wifi_manager(self):
-        if platform.system() == "Windows":
-            return None
-        return cast(
-            'android.net.wifi.WifiManager',
-            self.current_activity.getSystemService(autoclass('android.content.Context').WIFI_SERVICE)
+    def _show_wifi_list(self, networks: list):
+        """Affiche la liste des réseaux WiFi disponibles."""
+        DialogHelper.show_list_selection(
+            title="Available Wi-Fi Networks",
+            items=networks,
+            on_select=self._on_network_selected
         )
 
-    def get_wifi_networks(self):
-        if platform.system() == "Windows":
-            return [f"WIFI_NAME_{i}" for i in range(10)]
+    def _on_network_selected(self, ssid: str):
+        """Gère la sélection d'un réseau WiFi."""
+        self._show_connect_dialog(ssid)
 
-        permissions = [
-            "android.permission.ACCESS_WIFI_STATE",
-            "android.permission.ACCESS_FINE_LOCATION",
-            "android.permission.CHANGE_WIFI_STATE",
+    def _show_connect_dialog(self, ssid: str):
+        """Affiche le dialog de connexion WiFi."""
+        connect_content = ConnectDialogContent(ssid)
+
+        def on_connect(dialog):
+            password = connect_content.get_password()
+            dialog.dismiss()
+            self._connect_to_wifi(ssid, password)
+
+        DialogHelper.show_custom(
+            title="Connect to Wi-Fi",
+            content=connect_content,
+            buttons=[
+                ("CANCEL", None),
+                ("CONNECT", on_connect)
+            ]
+        )
+
+    def _connect_to_wifi(self, ssid: str, password: str):
+        """Connecte au réseau WiFi sélectionné."""
+        success = self._wifi_manager.connect(ssid, password)
+        if success:
+            DialogHelper.show_info(
+                "Information",
+                f"Connecting to {ssid}..."
+            )
+            # Mettre à jour le SSID après un délai
+            Clock.schedule_once(self._update_current_ssid, 2.0)
+        else:
+            DialogHelper.show_info(
+                "Error",
+                f"Failed to connect to {ssid}"
+            )
+
+    def _on_configure_drone(self, instance):
+        """Affiche le dialog de configuration du drone."""
+        fields = [
+            {'name': 'ip', 'hint': 'IP Address', 'value': self._drone_config.ip},
+            {'name': 'port', 'hint': 'Port', 'value': self._drone_config.port}
         ]
 
-        for permission in permissions:
-            if self.current_activity.checkSelfPermission(permission) != 0:
-                self.current_activity.requestPermissions([permission], 1)
-                return []
-
-        if not self.wifi_manager.isWifiEnabled():
-            self.wifi_manager.setWifiEnabled(True)
-
-        success = self.wifi_manager.startScan()
-        if not success:
-            return []
-
-        scan_results = self.wifi_manager.getScanResults()
-        networks = [result.SSID for result in scan_results if result.SSID]
-        return networks
-
-    def show_wifi_list(self, networks):
-        # Conteneur principal
-        container = MDBoxLayout(orientation='vertical', size_hint_y=None, height="300dp")
-
-        scroll = MDScrollView()
-        list_view = MDList()
-
-        for net in networks:
-            item = OneLineListItem(text=net)
-            item.bind(on_release=self._on_network_selected(net))
-            list_view.add_widget(item)
-
-        scroll.add_widget(list_view)
-        container.add_widget(scroll)
-
-        self.network_dialog = MDDialog(
-            title="Available Wi-Fi Networks",
-            type="custom",
-            content_cls=container,
-            buttons=[
-                MDRectangleFlatButton(
-                    text="CANCEL",
-                    on_release=lambda x: self.network_dialog.dismiss()
-                )
-            ]
+        DialogHelper.show_input(
+            title="Configure Drone Connection",
+            fields=fields,
+            on_save=self._save_drone_config
         )
-        self.network_dialog.open()
 
-    def _on_network_selected(self, ssid):
-        def callback(instance):
-            self.network_dialog.dismiss()
-            self.show_connect_dialog(ssid)
-        return callback
+    def _save_drone_config(self, values: Dict[str, str], dialog):
+        """Sauvegarde la configuration du drone."""
+        ip = values.get('ip', '').strip()
+        port = values.get('port', '').strip()
 
-    def show_connect_dialog(self, ssid):
-        self.connect_content = ConnectDialogContent(ssid)
+        # Validation
+        if not ip or not port:
+            DialogHelper.show_info("Error", "Please fill in both IP and Port fields.")
+            return
 
-        self.connect_dialog = MDDialog(
-            title="Connect to Wi-Fi",
-            type="custom",
-            content_cls=self.connect_content,
-            buttons=[
-                MDRectangleFlatButton(
-                    text="CANCEL",
-                    on_release=lambda x: self.connect_dialog.dismiss()
-                ),
-                MDRectangleFlatButton(
-                    text="CONNECT",
-                    on_release=lambda x: self._connect_to_wifi(ssid, self.connect_content.get_password())
-                )
-            ]
+        try:
+            port_int = int(port)
+            if port_int < 1 or port_int > 65535:
+                DialogHelper.show_info("Error", "Port must be between 1 and 65535.")
+                return
+        except ValueError:
+            DialogHelper.show_info("Error", "Port must be a valid number.")
+            return
+
+        # Sauvegarde
+        self._drone_config.set_config(ip, port)
+
+        # Mise à jour de l'UI
+        self.drone_ip_label.text = f'Drone IP: {self._drone_config.ip}'
+        self.drone_port_label.text = f'Drone Port: {self._drone_config.port}'
+
+        dialog.dismiss()
+        DialogHelper.show_info(
+            "Success",
+            f"Drone configuration saved:\nIP: {ip}\nPort: {port}"
         )
-        self.connect_dialog.open()
 
-    def _connect_to_wifi(self, ssid, password):
-        self.connect_dialog.dismiss()
-        self.show_dialog(f"Connecting to {ssid} with password: {password}")
-        WifiConfiguration = autoclass('android.net.wifi.WifiConfiguration')
-        wifi_config = WifiConfiguration()
-        wifi_config.SSID = f'"{ssid}"'
-        wifi_config.preSharedKey = f'"{password}"'
-
-        self.wifi_manager.addNetwork(wifi_config)
-        self.wifi_manager.enableNetwork(wifi_config.networkId, True)
-
-    def show_dialog(self, message):
-        info_dialog = MDDialog(
-            title="Information",
-            text=message,
-            buttons=[
-                MDRectangleFlatButton(
-                    text="OK",
-                    on_release=lambda x: info_dialog.dismiss()
-                )
-            ]
-        )
-        info_dialog.open()
+    def get_drone_config(self) -> Dict[str, str]:
+        """Retourne la configuration actuelle du drone."""
+        return self._drone_config.get_config()
