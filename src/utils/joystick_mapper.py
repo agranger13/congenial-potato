@@ -27,7 +27,8 @@ class JoystickMapper:
     Classe pour mapper les valeurs du joystick vers les commandes drone.
 
     Le joystick renvoie des valeurs entre -1.0 et 1.0.
-    Le drone attend des valeurs entre 0 et 1023 (sauf throttle: 0-200).
+    Le drone attend des valeurs entre 0 et 1023 sur les quatre axes ; le
+    throttle utilise la même plage mais sans centre (0 = gaz coupés).
     """
 
     def __init__(self, deadzone: int = DEADZONE):
@@ -63,15 +64,18 @@ class JoystickMapper:
     def map_throttle(self, pad_y: float) -> int:
         """
         Mapping spécial pour le throttle.
-        -1.0 (bas) = 0, +1.0 (haut) = 200
+        -1.0 (bas) = 0, +1.0 (haut) = 1023
+
+        Contrairement aux autres axes, le throttle n'est pas centré : il part
+        de zéro. L'échelle reste 0-1023 car le firmware divise par 1023.
 
         Args:
             pad_y: Valeur Y du pad entre -1.0 et 1.0
 
         Returns:
-            Valeur throttle entre 0 et 200
+            Valeur throttle entre 0 et 1023
         """
-        throttle_value = int((pad_y + 1.0) * 100)  # [-1, 1] -> [0, 200]
+        throttle_value = int((pad_y + 1.0) * (THROTTLE_MAX / 2))  # [-1, 1] -> [0, 1023]
 
         # Zone morte en bas pour le throttle
         if throttle_value <= THROTTLE_DEADZONE:

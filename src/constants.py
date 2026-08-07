@@ -9,7 +9,7 @@ from typing import Tuple
 # =============================================================================
 
 DEFAULT_DRONE_IP = "192.168.4.1"
-DEFAULT_DRONE_PORT = "1234"
+DEFAULT_DRONE_PORT = "4210"  # Doit correspondre au port UDP du firmware
 PREFERENCES_NAME = "DroneSettings"
 
 # =============================================================================
@@ -25,10 +25,13 @@ JOYSTICK_RANGE = JOYSTICK_MAX - JOYSTICK_MIN
 DEADZONE = 20
 
 # Throttle
+# Le firmware traite les 4 axes sur la même échelle 0-1023 :
+# il calcule rightY / 1023 avant de multiplier par son propre MAX_THROTTLE.
+# Envoyer le throttle sur une échelle plus courte briderait la puissance.
 THROTTLE_MIN = 0
-THROTTLE_MAX = 200
-THROTTLE_DEFAULT = 100
-THROTTLE_DEADZONE = 10
+THROTTLE_MAX = JOYSTICK_MAX
+THROTTLE_DEFAULT = 0  # Gaz à zéro au démarrage
+THROTTLE_DEADZONE = 50  # ~5% de la plage, comme avant le passage à 0-1023
 
 # Conversion angles
 MAX_ROLL_PITCH_DEGREES = 30
